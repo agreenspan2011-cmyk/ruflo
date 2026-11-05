@@ -1,0 +1,52 @@
+# TEMPORARY, debug branch only: never merge. Repeats one ruflo-console kit test file to catch a flaky failure with its error.
+name: debug console flake
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  repeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --global "@anthropic-ai/claude-code@2.1.318"
+      - name: Keep only surface-pictures.test.ts
+        run: |
+          set -eu
+          cp -R plugins/ruflo-console "$RUNNER_TEMP/console"
+          find "$RUNNER_TEMP/console" -name '*.test.ts' ! -name 'surface-pictures.test.ts' -delete
+      - name: Run it 8 times
+        shell: bash {0}
+        run: |
+          set -u
+          fails=0
+          touch "$RUNNER_TEMP/marker"
+          for i in 1 2 3 4 5 6 7 8; do
+            start=$(date +%s)
+            claude plugin test "$RUNNER_TEMP/console" > out.txt 2>&1
+            code=$?
+            echo "shard ${{ matrix.shard }} run $i: exit $code in $(( $(date +%s) - start ))s; $(grep -cE '^\(fail\)' out.txt) failed"
+            echo "  files left since start (count, total bytes): $(find "$HOME" /tmp "$RUNNER_TEMP" -newer "$RUNNER_TEMP/marker" -type f 2>/dev/null | grep -v '/console/' | wc -l), $(find "$HOME" /tmp "$RUNNER_TEMP" -newer "$RUNNER_TEMP/marker" -type f 2>/dev/null | grep -v '/console/' | xargs -r du -cb 2>/dev/null | tail -1 | cut -f1)"
+            if [ "$code" -ne 0 ]; then
+              fails=$((fails + 1))
+              echo "::group::full output of shard ${{ matrix.shard }} run $i"
+              cat out.txt
+              echo "::endgroup::"
+              echo "::group::files left since start, largest first"
+              find "$HOME" /tmp "$RUNNER_TEMP" -newer "$RUNNER_TEMP/marker" -type f 2>/dev/null | grep -v '/console/' | xargs -r ls -lS 2>/dev/null | head -40
+              echo "::endgroup::"
+            fi
+          done
+          echo "FLAKE_SUMMARY shard ${{ matrix.shard }}: $fails of 8 runs failed"
+          exit 0
